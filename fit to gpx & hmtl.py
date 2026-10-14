@@ -3,7 +3,7 @@ import folium
 import branca.colormap as cm
 import fitdecode
 
-FIT_FILE = Path("./data_fit/activity3.fit")
+FIT_FILE = Path("./real_data_fit/2026-10-11-16-45-04.fit")
 HTML_OUT = "carte_allure_dashboard.html"
 SEMICIRCLE = 180.0 / (2 ** 31)
 
@@ -157,35 +157,119 @@ folium.Marker([records[0]["lat"], records[0]["lon"]], popup="Départ",
               icon=folium.Icon(color="green", icon="play")).add_to(m)
 folium.Marker([records[-1]["lat"], records[-1]["lon"]], popup="Arrivée",
               icon=folium.Icon(color="red", icon="flag")).add_to(m)
-colormap.add_to(m)
+# [Garde toute la première partie de ton script de parsing et de calcul inchangée]
 
-# 5. Encart complet avec D+ / D-
+# ...
+
+# 3. Échelle de l'allure (valeurs de référence pour la légende)
+min_pace = max(3.5, min(r["pace"] for r in records))
+max_pace = min(7.5, max(r["pace"] for r in records))
+
+# On garde le colormap pour colorer les tracés
+colormap = cm.LinearColormap(
+    colors=["#2DC653", "#FFD166", "#EF233C"],
+    vmin=min_pace,
+    vmax=max_pace
+)
+
+# 4. Carte Folium (toujours avec Esri pour éviter le 403)
+start_loc = [records[0]["lat"], records[0]["lon"]]
+m = folium.Map(
+    location=start_loc,
+    zoom_start=16,
+    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attr="Esri, HERE, Garmin, USGS, NGA"
+)
+
+# Micro-segments colorés (Garder tel quel)
+for i in range(len(records) - 1):
+    pt1 = records[i]
+    pt2 = records[i + 1]
+    avg_pace = (pt1["pace"] + pt2["pace"]) / 2.0
+    m_p, s_p = divmod(int(avg_pace * 60), 60)
+
+    folium.PolyLine(
+        locations=[(pt1["lat"], pt1["lon"]), (pt2["lat"], pt2["lon"])],
+        color=colormap(avg_pace),
+        weight=5,
+        opacity=0.9,
+        tooltip=f"{m_p}:{s_p:02d} min/km"
+    ).add_to(m)
+
+# Marqueurs Départ / Arrivée
+folium.Marker([records[0]["lat"], records[0]["lon"]], popup="Départ", icon=folium.Icon(color="green", icon="play")).add_to(m)
+folium.Marker([records[-1]["lat"], records[-1]["lon"]], popup="Arrivée", icon=folium.Icon(color="red", icon="flag")).add_to(m)
+
+
+# 5. --- STYLE COMMUN POUR LES ENCARTS ---
+style_commun = """
+    background: white; 
+    border: 2px solid #2B2D42; 
+    border-radius: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    color: #111;
+    z-index: 9999;
+"""
+
+# 6. --- ENCART DE SYNTHÈSE DE COURSE ---
 info_box_html = f"""
 <div style="
-    position: fixed; top: 60px; right: 15px; width: 310px;
-    background: white; border: 2px solid #2B2D42; border-radius: 8px;
-    z-index: 9999; padding: 12px 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 13px; line-height: 1.55; color: #111; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    position: fixed; top: 15px; right: 15px; width: 290px;
+    padding: 12px 16px; font-size: 13px; line-height: 1.55;
+    {style_commun}
 ">
     <div style="font-weight: 700; font-size: 15px; margin-bottom: 8px; border-bottom: 1px solid #E0E0E0; padding-bottom: 4px;">
         Synthèse de Course
     </div>
     <div style="margin: 3px 0;"><b>Distance :</b> {total_dist_m / 1000:.2f} km</div>
     <div style="margin: 3px 0;">
-        <b>Durée :</b> {format_time(moving_seconds)} <span style="color: #6C757D; font-size: 11px;">(total sans pause : {format_time(total_seconds)})</span>
+        <b>Durée :</b> {format_time(moving_seconds)} <span style="color: #6C757D; font-size: 11px;">(total : {format_time(total_seconds)})</span>
     </div>
     <div style="margin: 3px 0;">
-        <b>Vitesse moyenne :</b> {moving_speed_kmh:.1f} km/h <span style="color: #6C757D; font-size: 11px;">
+        <b>Vitesse :</b> {moving_speed_kmh:.1f} km/h <span style="color: #6C757D; font-size: 11px;">(total : {total_speed_kmh:.1f})</span>
     </div>
     <div style="margin: 3px 0;">
-        <b>Allure moyenne:</b> {sec_to_pace_str(moving_speed_kmh)} <span style="color: #6C757D; font-size: 11px;">
+        <b>Allure moy :</b> {sec_to_pace_str(moving_speed_kmh)} <span style="color: #6C757D; font-size: 11px;">(total : {sec_to_pace_str(total_speed_kmh)})</span>
     </div>
     <div style="margin: 3px 0;">
         <b>Dénivelé :</b> +{int(total_ascent)} m / -{int(total_descent)} m
     </div>
 </div>
 """
+
+# 7. --- NOUVEL ENCART : ÉCHELLE DE VITESSE / ALLURE ---
+# Formatage des valeurs min et max pour l'affichage de la légende
+m_min, s_min = divmod(int(min_pace * 60), 60)
+m_max, s_max = divmod(int(max_pace * 60), 60)
+
+legend_html = f"""
+<div style="
+    position: fixed; top: 210px; right: 15px; width: 290px;
+    padding: 12px 16px; font-size: 12px;
+    {style_commun}
+">
+    <div style="font-weight: 700; font-size: 13px; margin-bottom: 8px; border-bottom: 1px solid #E0E0E0; padding-bottom: 4px;">
+        Échelle d'allure (min/km)
+    </div>
+    <!-- Dégradé de Vert (#2DC653) à Rouge (#EF233C) -->
+    <div style="
+        height: 14px; 
+        background: linear-gradient(to right, #2DC653 0%, #FFD166 50%, #EF233C 100%); 
+        border-radius: 4px;
+        margin-bottom: 6px;
+    "></div>
+    <div style="display: flex; justify-content: space-between; font-weight: 500; font-size: 11px;">
+        <span style="color: #2DC653;">{m_min}:{s_min:02d} (Rapide)</span>
+        <span style="color: #6C757D;">{int((min_pace + max_pace)/2)}:00</span>
+        <span style="color: #EF233C;">{m_max}:{s_max:02d} (Lent)</span>
+    </div>
+</div>
+"""
+
+# Injection des deux encarts dans la carte
 m.get_root().html.add_child(folium.Element(info_box_html))
+m.get_root().html.add_child(folium.Element(legend_html))
 
 m.save(HTML_OUT)
 print(f"Carte enregistrée : {HTML_OUT}")
