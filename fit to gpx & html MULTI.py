@@ -3,8 +3,11 @@ from pathlib import Path
 import fitdecode
 import folium
 
-INPUT_DIR = Path("./data_fit_generated")
-OUTPUT_MAP_PATH = "heatmap_courses.html"
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+INPUT_DIR = SCRIPT_DIR / "data_fit_generated"
+OUTPUT_MAP_PATH = SCRIPT_DIR / "heatmap_courses.html"
+
 SEMICIRCLE_TO_DEGREES = 180.0 / (2**31)
 
 
