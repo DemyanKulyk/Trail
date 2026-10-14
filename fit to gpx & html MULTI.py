@@ -179,14 +179,25 @@ for track in all_tracks:
 
     for i, speed in enumerate(speeds):
 
+        segment = [
+            coords[i],
+            coords[i + 1]
+        ]
+
+        # Layer 1: passage-frequency halo
         folium.PolyLine(
-            locations=[
-                coords[i],
-                coords[i + 1]
-            ],
-            color=colormap(min(25,speed)),
-            weight=5,
-            opacity=0.85,
+            locations=segment,
+            color="#FFFFFF",
+            weight=4,
+            opacity=0.06
+        ).add_to(m)
+
+        # Layer 2: speed
+        folium.PolyLine(
+            locations=segment,
+            color=colormap(min(speed, 25)),
+            weight=2,
+            opacity=0.40,
             tooltip=f"{speed:.1f} km/h"
         ).add_to(m)
 
