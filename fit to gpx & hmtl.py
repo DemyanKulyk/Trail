@@ -3,15 +3,19 @@ import folium
 import branca.colormap as cm
 import fitdecode
 
-FIT_FILE = Path("./real_data_fit/2026-10-11-16-45-04.fit")
-HTML_OUT = "carte_allure_dashboard.html"
+FIT_FILE = Path("./real_data_fit/22318015913_ACTIVITY.fit")
+OUTPUT_DIR = Path("./cartes_sorties")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Crée le dossier s'il n'existe pas
+HTML_OUT = OUTPUT_DIR / "carte_allure_dashboard.html"
+
+
 SEMICIRCLE = 180.0 / (2 ** 31)
 
 records = []
 total_ascent = None
 total_descent = None
 
-# 1. Parsing du fichier .FIT
+# 0. Parsing du fichier .FIT
 with fitdecode.FitReader(FIT_FILE) as fit:
     for frame in fit:
         if isinstance(frame, fitdecode.FitDataMessage):
@@ -108,7 +112,7 @@ def sec_to_pace_str(speed_kmh: float) -> str:
         return "-:--"
     pace_dec = 60.0 / speed_kmh
     m, s = divmod(int(pace_dec * 60), 60)
-    return f"{m}:{s:02d} /km"
+    return f"{m}:{s:02d} min/km"
 
 
 def format_time(sec: float) -> str:
@@ -227,10 +231,10 @@ info_box_html = f"""
         <b>Durée :</b> {format_time(moving_seconds)} <span style="color: #6C757D; font-size: 11px;">(total : {format_time(total_seconds)})</span>
     </div>
     <div style="margin: 3px 0;">
-        <b>Vitesse :</b> {moving_speed_kmh:.1f} km/h <span style="color: #6C757D; font-size: 11px;">(total : {total_speed_kmh:.1f})</span>
+        <b>Vitesse :</b> {moving_speed_kmh:.1f} km/h <span style="color: #6C757D; font-size: 11px;"></span>
     </div>
     <div style="margin: 3px 0;">
-        <b>Allure moy :</b> {sec_to_pace_str(moving_speed_kmh)} <span style="color: #6C757D; font-size: 11px;">(total : {sec_to_pace_str(total_speed_kmh)})</span>
+        <b>Allure moy :</b> {sec_to_pace_str(moving_speed_kmh)} <span style="color: #6C757D; font-size: 11px;"></span>
     </div>
     <div style="margin: 3px 0;">
         <b>Dénivelé :</b> +{int(total_ascent)} m / -{int(total_descent)} m
@@ -240,8 +244,14 @@ info_box_html = f"""
 
 # 7. --- NOUVEL ENCART : ÉCHELLE DE VITESSE / ALLURE ---
 # Formatage des valeurs min et max pour l'affichage de la légende
-m_min, s_min = divmod(int(min_pace * 60), 60)
-m_max, s_max = divmod(int(max_pace * 60), 60)
+# Formatage rigoureux MM:SS pour les trois repères de la légende
+def format_pace(pace_dec: float) -> str:
+    m, s = divmod(int(round(pace_dec * 60)), 60)
+    return f"{m}:{s:02d}"
+
+pace_min_str = format_pace(min_pace)
+pace_mid_str = format_pace((min_pace + max_pace) / 2.0)
+pace_max_str = format_pace(max_pace)
 
 legend_html = f"""
 <div style="
@@ -260,9 +270,9 @@ legend_html = f"""
         margin-bottom: 6px;
     "></div>
     <div style="display: flex; justify-content: space-between; font-weight: 500; font-size: 11px;">
-        <span style="color: #2DC653;">{m_min}:{s_min:02d} (Rapide)</span>
-        <span style="color: #6C757D;">{int((min_pace + max_pace)/2)}:00</span>
-        <span style="color: #EF233C;">{m_max}:{s_max:02d} (Lent)</span>
+        <span style="color: #2DC653;">{pace_min_str} </span>
+        <span style="color: #6C757D;">{pace_mid_str}</span>
+        <span style="color: #EF233C;">{pace_max_str} </span>
     </div>
 </div>
 """
@@ -271,5 +281,5 @@ legend_html = f"""
 m.get_root().html.add_child(folium.Element(info_box_html))
 m.get_root().html.add_child(folium.Element(legend_html))
 
-m.save(HTML_OUT)
-print(f"Carte enregistrée : {HTML_OUT}")
+m.save(str(HTML_OUT))
+print(f"Carte enregistrée : {HTML_OUT.resolve()}") # resolve() affiche le chemin absolu complet
