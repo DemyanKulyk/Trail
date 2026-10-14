@@ -2,7 +2,7 @@ import math
 from pathlib import Path
 import fitdecode
 import folium
-
+from branca.colormap import LinearColormap
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INPUT_DIR = SCRIPT_DIR / "data_fit_generated"
@@ -35,45 +35,98 @@ all_tracks = []
 all_points = []
 total_distance_m = 0.0
 total_duration_s = 0.0
+all_speeds = []
 
 fit_files = list(INPUT_DIR.glob("*.fit"))
+
 if not fit_files:
-  print(f"Aucun fichier .fit trouvé dans {INPUT_DIR.resolve()}")
-  exit()
+    print(f"Aucun fichier .fit trouvé dans {INPUT_DIR.resolve()}")
+    exit()
 
 for fit_path in fit_files:
-  coords = []
-  timestamps = []
 
-  with fitdecode.FitReader(str(fit_path)) as fit:
-    for frame in fit:
-      if isinstance(frame, fitdecode.FitDataMessage) and frame.name == "record":
-        if frame.has_field("position_lat") and frame.has_field("position_long"):
-          raw_lat = frame.get_value("position_lat")
-          raw_lon = frame.get_value("position_long")
-          if raw_lat is not None and raw_lon is not None:
-            coords.append(
-                (raw_lat * SEMICIRCLE_TO_DEGREES, raw_lon * SEMICIRCLE_TO_DEGREES)
+    coords = []
+    timestamps = []
+
+    with fitdecode.FitReader(str(fit_path)) as fit:
+
+        for frame in fit:
+
+            if (
+                isinstance(frame, fitdecode.FitDataMessage)
+                and frame.name == "record"
+            ):
+
+                if (
+                    frame.has_field("position_lat")
+                    and frame.has_field("position_long")
+                ):
+
+                    raw_lat = frame.get_value("position_lat")
+                    raw_lon = frame.get_value("position_long")
+
+                    if raw_lat is not None and raw_lon is not None:
+
+                        lat = raw_lat * SEMICIRCLE_TO_DEGREES
+                        lon = raw_lon * SEMICIRCLE_TO_DEGREES
+
+                        coords.append((lat, lon))
+
+                        if frame.has_field("timestamp"):
+                            t = frame.get_value("timestamp")
+                            timestamps.append(t)
+                        else:
+                            timestamps.append(None)
+
+    if len(coords) >= 2:
+
+        speeds = []
+
+        for i in range(len(coords) - 1):
+
+            distance = haversine(
+                coords[i],
+                coords[i + 1]
             )
-            if frame.has_field("timestamp"):
-              t = frame.get_value("timestamp")
-              if t:
-                timestamps.append(t)
 
-  if coords:
-    all_tracks.append(coords)
-    all_points.extend(coords)
+            total_distance_m += distance
 
-    # Calcul distance
-    file_dist = sum(
-        haversine(coords[i], coords[i + 1]) for i in range(len(coords) - 1)
-    )
-    total_distance_m += file_dist
+            t1 = timestamps[i]
+            t2 = timestamps[i + 1]
 
-    # Calcul durée
-    if len(timestamps) >= 2:
-      file_duration = (timestamps[-1] - timestamps[0]).total_seconds()
-      total_duration_s += max(0, file_duration)
+            if t1 is not None and t2 is not None:
+
+                dt = (t2 - t1).total_seconds()
+
+                if dt > 0:
+
+                    speed_mps = distance / dt
+                    speed_kmh = speed_mps * 3.6
+
+                else:
+                    speed_kmh = 0
+
+            else:
+                speed_kmh = 0
+
+            speeds.append(speed_kmh)
+
+        all_tracks.append({
+            "coords": coords,
+            "speeds": speeds,
+            "filename": fit_path.name
+        })
+
+        all_points.extend(coords)
+        all_speeds.extend(speeds)
+
+        if timestamps[0] is not None and timestamps[-1] is not None:
+
+            file_duration = (
+                timestamps[-1] - timestamps[0]
+            ).total_seconds()
+
+            total_duration_s += max(0, file_duration)
 
 if not all_points:
   print("Erreur : Aucun point GPS valide trouvé dans les fichiers .fit.")
@@ -87,13 +140,58 @@ m = folium.Map(
 
 # TECHNIQUE HEATMAP VECTORIELLE (DOUBLE COUCHE) :
 # Passe 1 : Halo diffus épais. S'accumule là où il y a du passage pour créer une zone incandescente
+##for track in all_tracks:
+  ##folium.PolyLine(
+      ##locations=track,
+      ##color="#FF3300",  # Rouge-orangé chaud
+      ##weight=8,
+      ##opacity=0.18,
+  ##).add_to(m)
+# --------------------------------------------------
+# Speed color scale
+# --------------------------------------------------
+
+min_speed = 0
+max_speed = 25
+display_speed = min(speed, 25)
+colormap = LinearColormap(
+    colors=[
+        "blue",
+        "cyan",
+        "lime",
+        "yellow",
+        "orange",
+        "red"
+    ],
+    vmin=0,
+    vmax=25,
+    caption="Vitesse (km/h)"
+)
+
+colormap.add_to(m)
+
+
+# --------------------------------------------------
+# Draw every segment according to its speed
+# --------------------------------------------------
+
 for track in all_tracks:
-  folium.PolyLine(
-      locations=track,
-      color="#FF3300",  # Rouge-orangé chaud
-      weight=8,
-      opacity=0.18,
-  ).add_to(m)
+
+    coords = track["coords"]
+    speeds = track["speeds"]
+
+    for i, speed in enumerate(speeds):
+
+        folium.PolyLine(
+            locations=[
+                coords[i],
+                coords[i + 1]
+            ],
+            color=colormap(min(25,speed)),
+            weight=5,
+            opacity=0.85,
+            tooltip=f"{speed:.1f} km/h"
+        ).add_to(m)
 
 # Passe 2 : Noyau fin haute intensité
 for track in all_tracks:
