@@ -151,9 +151,6 @@ m = folium.Map(
 # Speed color scale
 # --------------------------------------------------
 
-min_speed = 0
-max_speed = 25
-display_speed = min(speed, 25)
 colormap = LinearColormap(
     colors=[
         "blue",
@@ -194,13 +191,13 @@ for track in all_tracks:
         ).add_to(m)
 
 # Passe 2 : Noyau fin haute intensité
-for track in all_tracks:
-  folium.PolyLine(
-      locations=track,
-      color="#FFFF33",  # Jaune néon au centre
-      weight=2,
-      opacity=0.45,
-  ).add_to(m)
+##for track in all_tracks:
+  ##folium.PolyLine(
+      ##locations=track,
+      ##color="#FFFF33",  # Jaune néon au centre
+      ##weight=2,
+      ##opacity=0.45,
+  ##).add_to(m)
 
 # Recadrage automatique précis
 lats = [p[0] for p in all_points]
@@ -236,7 +233,7 @@ info_box_html = f"""
         <span style="color: #90A4AE;">Temps cumulé :</span> <b>{format_seconds(total_duration_s)}</b>
     </div>
     <div style="display: flex; justify-content: space-between; margin: 4px 0;">
-        <span style="color: #90A4AE;">Allure moy :</span> <b>{avg_speed:.1f} km/h</b>
+        <span style="color: #90A4AE;">Vitesse moy. :</span> <b>{avg_speed:.1f} km/h</b>
     </div>
 </div>
 """
