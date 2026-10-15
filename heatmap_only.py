@@ -2,6 +2,7 @@ from pathlib import Path
 import folium
 from folium.plugins import HeatMap
 import fitdecode
+import warnings
 
 FIT_DIR = Path("./real_data_fit")
 OUTPUT_DIR = Path("./cartes_sorties")
@@ -109,3 +110,9 @@ m.get_root().html.add_child(folium.Element(info_box_html))
 m.save(str(HTML_OUT))
 print(f"Carte enregistrée : {HTML_OUT.resolve()}") # resolve() affiche le chemin absolu complet
 print(f"-> {total_points_bruts} points bruts réduits à {total_points_affiches} pour l'affichage.")
+
+
+# Masquer les warnings spécifiques de fitdecode sur les champs non standard
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="fitdecode.reader"
+)

@@ -2,11 +2,12 @@ from pathlib import Path
 import folium
 import branca.colormap as cm
 import fitdecode
+import warnings
 
 FIT_FILE = Path("./real_data_fit/22318015913_ACTIVITY.fit")
 OUTPUT_DIR = Path("./cartes_sorties")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Crée le dossier s'il n'existe pas
-HTML_OUT = OUTPUT_DIR / "carte_allure_dashboard.html"
+HTML_OUT = OUTPUT_DIR / "carte_simple.html"
 
 
 SEMICIRCLE = 180.0 / (2 ** 31)
@@ -283,3 +284,8 @@ m.get_root().html.add_child(folium.Element(legend_html))
 
 m.save(str(HTML_OUT))
 print(f"Carte enregistrée : {HTML_OUT.resolve()}") # resolve() affiche le chemin absolu complet
+
+# Masquer les warnings spécifiques de fitdecode sur les champs non standard
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="fitdecode.reader"
+)

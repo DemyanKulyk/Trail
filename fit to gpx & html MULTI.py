@@ -3,10 +3,13 @@ from pathlib import Path
 import fitdecode
 import folium
 from branca.colormap import LinearColormap
+import warnings
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-INPUT_DIR = SCRIPT_DIR / "data_fit_generated"
-OUTPUT_MAP_PATH = SCRIPT_DIR / "heatmap_courses.html"
+INPUT_DIR = SCRIPT_DIR / "real_data_fit"
+OUTPUT_DIR = Path("./cartes_sorties")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Crée le dossier s'il n'existe pas
+HTML_OUT = OUTPUT_DIR / "heatmap_frequentation_vitesses.html"
 
 SEMICIRCLE_TO_DEGREES = 180.0 / (2**31)
 
@@ -250,5 +253,10 @@ info_box_html = f"""
 """
 m.get_root().html.add_child(folium.Element(info_box_html))
 
-m.save(OUTPUT_MAP_PATH)
-print(f"Heatmap stylisée générée avec succès : {OUTPUT_MAP_PATH}")
+m.save(str(HTML_OUT))
+print(f"Heatmap stylisée générée avec succès : {HTML_OUT.resolve()}")
+
+# Masquer les warnings spécifiques de fitdecode sur les champs non standard
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="fitdecode.reader"
+)
