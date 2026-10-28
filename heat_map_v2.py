@@ -17,7 +17,7 @@ OUTPUT_DIR = SCRIPT_DIR / "cartes_sorties"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-HTML_OUT = OUTPUT_DIR / "runs_lines_smooth_snap5m_fast.html"
+HTML_OUT = OUTPUT_DIR / "runs_lines_smooth_snap15m_fast.html"
 
 
 # ============================================================
@@ -27,11 +27,11 @@ HTML_OUT = OUTPUT_DIR / "runs_lines_smooth_snap5m_fast.html"
 SEMICIRCLE = 180.0 / (2 ** 31)
 
 # Moving-average smoothing
-SMOOTH_WINDOW = 10
+SMOOTH_WINDOW = 5
 
 # If a GPS point is <= 5 m from an existing route,
 # snap it onto that route.
-SNAP_THRESHOLD_M = 5
+SNAP_THRESHOLD_M = 10
 
 # Create reference points roughly every 2 metres
 # along previous routes.
@@ -44,6 +44,7 @@ HALO_OPACITY = 0.08
 LINE_WEIGHT = 2
 LINE_OPACITY = 0.45
 
+MAX_DIRECTION_DIFFERENCE = 45
 
 # ============================================================
 # DISTANCE
@@ -150,6 +151,37 @@ def gps_to_xy(coords, ref_lat):
 
     return result
 
+def angle_difference(dx1, dy1, dx2, dy2):
+    """
+    Return the smallest angle difference in degrees
+    between two direction vectors.
+    """
+
+    angle1 = math.degrees(
+        math.atan2(dy1, dx1)
+    )
+
+    angle2 = math.degrees(
+        math.atan2(dy2, dx2)
+    )
+
+    diff = abs(angle1 - angle2)
+
+    if diff > 180:
+        diff = 360 - diff
+
+    return diff
+
+def xy_to_gps(x, y, ref_lat):
+    """Convert local metre coordinates back to GPS."""
+
+    lat = y / 111320
+
+    lon = x / (
+        111320 * math.cos(math.radians(ref_lat))
+    )
+
+    return (lat, lon)
 
 # ============================================================
 # CREATE DENSE REFERENCE ROUTE
@@ -207,31 +239,36 @@ def densify_track(coords, spacing_m=2):
 
 def snap_with_kdtree(
     coords,
-    reference_points,
-    threshold_m=5
+    reference_tracks,
+    threshold_m=10,
+    k_candidates=10
 ):
     """
-    Find the nearest previous-route point with a KD-tree.
+    Snap the current route onto the existing canonical network.
 
-    If it is <= threshold_m away:
-        use the existing route coordinate.
+    Returns:
+        snapped_coords
+        snapped_mask
 
-    Otherwise:
-        keep the original coordinate.
+    snapped_mask[i] = True
+        -> point matched an existing route
+
+    snapped_mask[i] = False
+        -> point represents potentially new territory
     """
 
-    # First run -> there is nothing to snap to
-    if not reference_points:
-        return coords
+    if not reference_tracks:
+        return coords, [False] * len(coords)
+
+    all_reference_points = [
+        point
+        for track in reference_tracks
+        for point in track
+    ]
 
     ref_lat = (
-        sum(p[0] for p in reference_points)
-        / len(reference_points)
-    )
-
-    reference_xy = gps_to_xy(
-        reference_points,
-        ref_lat
+        sum(p[0] for p in all_reference_points)
+        / len(all_reference_points)
     )
 
     current_xy = gps_to_xy(
@@ -239,35 +276,256 @@ def snap_with_kdtree(
         ref_lat
     )
 
-    # Build fast spatial index
-    tree = cKDTree(reference_xy)
+    # ========================================================
+    # Build REAL segments from each reference track separately
+    # ========================================================
 
-    # Find nearest previous-route point
-    distances, indices = tree.query(
-        current_xy,
-        k=1
-    )
+    segments = []
+
+    for track in reference_tracks:
+
+        track_xy = gps_to_xy(
+            track,
+            ref_lat
+        )
+
+        for i in range(len(track_xy) - 1):
+
+            segments.append(
+                (
+                    track_xy[i],
+                    track_xy[i + 1]
+                )
+            )
+
+    if not segments:
+        return coords, [False] * len(coords)
+
+    # ========================================================
+    # KD-tree
+    # ========================================================
+
+    midpoints = [
+        (
+            (a[0] + b[0]) / 2,
+            (a[1] + b[1]) / 2
+        )
+        for a, b in segments
+    ]
+
+    tree = cKDTree(midpoints)
 
     snapped = []
+    snapped_mask = []
 
-    for point, distance, index in zip(
-        coords,
-        distances,
-        indices
-    ):
+    for i, point_xy in enumerate(current_xy):
 
-        if distance <= threshold_m:
+        px, py = point_xy
 
-            snapped.append(
-                reference_points[index]
+        # ====================================================
+        # Direction of current run
+        # ====================================================
+
+        if i == 0:
+
+            dx_run = (
+                current_xy[i + 1][0]
+                - current_xy[i][0]
+            )
+
+            dy_run = (
+                current_xy[i + 1][1]
+                - current_xy[i][1]
+            )
+
+        elif i == len(current_xy) - 1:
+
+            dx_run = (
+                current_xy[i][0]
+                - current_xy[i - 1][0]
+            )
+
+            dy_run = (
+                current_xy[i][1]
+                - current_xy[i - 1][1]
             )
 
         else:
 
-            snapped.append(point)
+            dx_run = (
+                current_xy[i + 1][0]
+                - current_xy[i - 1][0]
+            )
 
-    return snapped
+            dy_run = (
+                current_xy[i + 1][1]
+                - current_xy[i - 1][1]
+            )
 
+        # ====================================================
+        # Candidate segments
+        # ====================================================
+
+        k = min(
+            k_candidates,
+            len(segments)
+        )
+
+        _, candidate_indices = tree.query(
+            point_xy,
+            k=k
+        )
+
+        if k == 1:
+            candidate_indices = [candidate_indices]
+
+        best_distance = float("inf")
+        best_projection = None
+
+        for index in candidate_indices:
+
+            a, b = segments[index]
+
+            ax, ay = a
+            bx, by = b
+
+            dx_seg = bx - ax
+            dy_seg = by - ay
+
+            # ================================================
+            # Direction compatibility
+            # ================================================
+
+            direction_difference = angle_difference(
+                dx_run,
+                dy_run,
+                dx_seg,
+                dy_seg
+            )
+
+            direction_difference = min(
+                direction_difference,
+                abs(180 - direction_difference)
+            )
+
+            if (
+                direction_difference
+                > MAX_DIRECTION_DIFFERENCE
+            ):
+                continue
+
+            segment_length_squared = (
+                dx_seg * dx_seg
+                + dy_seg * dy_seg
+            )
+
+            if segment_length_squared == 0:
+                continue
+
+            # ================================================
+            # Project point onto segment
+            # ================================================
+
+            t = (
+                (px - ax) * dx_seg
+                + (py - ay) * dy_seg
+            ) / segment_length_squared
+
+            t = max(
+                0,
+                min(1, t)
+            )
+
+            proj_x = ax + t * dx_seg
+            proj_y = ay + t * dy_seg
+
+            distance = math.hypot(
+                px - proj_x,
+                py - proj_y
+            )
+
+            if distance < best_distance:
+
+                best_distance = distance
+
+                best_projection = (
+                    proj_x,
+                    proj_y
+                )
+
+        # ====================================================
+        # SNAP
+        # ====================================================
+
+        if (
+            best_projection is not None
+            and best_distance <= threshold_m
+        ):
+
+            snapped.append(
+                xy_to_gps(
+                    best_projection[0],
+                    best_projection[1],
+                    ref_lat
+                )
+            )
+
+            snapped_mask.append(True)
+
+        else:
+
+            snapped.append(
+                coords[i]
+            )
+
+            snapped_mask.append(False)
+
+    return snapped, snapped_mask
+
+def extract_new_sections(
+    coords,
+    snapped_mask,
+    min_points=4
+):
+    """
+    Extract only consecutive portions that did NOT match
+    the existing canonical route network.
+
+    Very short unmatched pieces are ignored because
+    they are usually GPS noise.
+    """
+
+    sections = []
+    current_section = []
+
+    for point, was_snapped in zip(
+        coords,
+        snapped_mask
+    ):
+
+        if not was_snapped:
+
+            current_section.append(
+                point
+            )
+
+        else:
+
+            if len(current_section) >= min_points:
+
+                sections.append(
+                    current_section
+                )
+
+            current_section = []
+
+    if len(current_section) >= min_points:
+
+        sections.append(
+            current_section
+        )
+
+    return sections
 
 # ============================================================
 # 1. FIND FIT FILES
@@ -295,8 +553,8 @@ all_tracks = []
 all_points = []
 
 # Contains dense points representing all previous paths
-reference_points = []
 
+reference_tracks = []
 processed_files_count = 0
 
 
@@ -375,9 +633,9 @@ for file_path in fit_files:
     # STEP 2: Snap to previous routes using KD-tree
     # --------------------------------------------------------
 
-    coords_snapped = snap_with_kdtree(
+    coords_snapped, snapped_mask = snap_with_kdtree(
         coords_smoothed,
-        reference_points,
+        reference_tracks,
         threshold_m=SNAP_THRESHOLD_M
     )
 
@@ -387,13 +645,14 @@ for file_path in fit_files:
     # --------------------------------------------------------
 
     all_tracks.append({
-        "name": file_path.name,
-        "coords": coords_snapped
-    })
+    "name": file_path.name,
 
-    all_points.extend(
-        coords_snapped
-    )
+    # Keep original smoothed route.
+    # We will snap ALL routes again at the end.
+    "coords_original": coords_smoothed,
+
+    "coords": coords_snapped
+    })
 
 
     # --------------------------------------------------------
@@ -405,15 +664,64 @@ for file_path in fit_files:
     # positions along the street.
     # --------------------------------------------------------
 
-    dense_reference = densify_track(
-        coords_snapped,
-        spacing_m=REFERENCE_SPACING_M
+    # ============================================================
+    # BUILD CANONICAL ROUTE NETWORK
+    # ============================================================
+
+    if len(reference_tracks) == 0:
+
+        # First run creates the initial canonical network
+        dense_reference = densify_track(
+            coords_smoothed,
+            spacing_m=REFERENCE_SPACING_M
+        )
+
+        reference_tracks.append(
+            dense_reference
+        )
+
+    else:
+
+        # Only genuinely NEW sections are allowed
+        # to expand the reference network.
+        new_sections = extract_new_sections(
+            coords_smoothed,
+            snapped_mask,
+            min_points=10
+        )
+
+        for section in new_sections:
+
+            dense_section = densify_track(
+                section,
+                spacing_m=REFERENCE_SPACING_M
+            )
+
+            reference_tracks.append(
+                dense_section
+            )
+# ============================================================
+# FINAL PASS
+#
+# Now that the complete canonical network exists,
+# snap EVERY run again to it.
+# ============================================================
+
+all_points = []
+
+for track in all_tracks:
+
+    final_coords, _ = snap_with_kdtree(
+        track["coords_original"],
+        reference_tracks,
+        threshold_m=SNAP_THRESHOLD_M
     )
 
-    reference_points.extend(
-        dense_reference
-    )
+    track["coords"] = final_coords
 
+    all_points.extend(
+        final_coords
+    )
 
 # ============================================================
 # CHECK DATA
@@ -617,7 +925,12 @@ print(
     f"{processed_files_count}"
 )
 
+total_reference_points = sum(
+    len(track)
+    for track in reference_tracks
+)
+
 print(
     f"Points de référence : "
-    f"{len(reference_points)}"
+    f"{total_reference_points}"
 )
