@@ -7,7 +7,7 @@ import warnings
 FIT_FILE = Path("./real_data_fit/22318015913_ACTIVITY.fit")
 OUTPUT_DIR = Path("./cartes_sorties")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Crée le dossier s'il n'existe pas
-HTML_OUT = OUTPUT_DIR / "carte_simple.html"
+HTML_OUT = OUTPUT_DIR / "onecourse.html"
 
 
 SEMICIRCLE = 180.0 / (2 ** 31)
