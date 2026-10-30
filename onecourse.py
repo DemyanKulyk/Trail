@@ -4,7 +4,8 @@ import branca.colormap as cm
 import fitdecode
 import warnings
 
-FIT_FILE = Path("./real_data_fit/22318015913_ACTIVITY.fit")
+NAME = "2026-10-29-17-10-20.fit"
+FIT_FILE = Path(f"./real_data_fit/{NAME}")
 OUTPUT_DIR = Path("./cartes_sorties")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Crée le dossier s'il n'existe pas
 HTML_OUT = OUTPUT_DIR / "onecourse.html"
