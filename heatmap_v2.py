@@ -41,13 +41,14 @@ MAX_SPEED_MS = 12  # on ignore les segments plus rapides (sauts GPS aberrants), 
 
 # --- Rendu ---
 PERCENTILE = 98  # les pixels au-dessus de ce percentile sont affichés à intensité max
-GAMMA = 0.5  # 0.5 = racine carrée (compresse les écarts). 1 = linéaire
-PALETTE = "violet"  # "violet" (proche de Strava sombre) ou "chaud"
+GAMMA = 0.4  # applique une racine aux intensités  (compresse les écarts). 1 = linéaire
+PALETTE = "rouge écriture logo"
 OPACITY = 0.95
 
 PALETTES = {
     "violet": [(0.0, (70, 60, 230)), (0.6, (125, 110, 255)), (1.0, (225, 235, 255))],
-    "chaud": [(0.0, (120, 0, 200)), (0.35, (230, 30, 90)), (0.7, (255, 160, 0)), (1.0, (255, 255, 200))],
+    "rose fond logo": [(0.0, (48, 23, 22)), (0.6, (238, 116, 109)), (1.0, (251, 227, 226))],
+    "rouge écriture logo": [(0.0, (37, 14, 11)), (0.6, (183, 68, 55)), (1.0, (241, 218, 215))],
 }
 
 EARTH_R = 6378137.0
@@ -100,6 +101,7 @@ def load_tracks(fit_dir):
 
 
 # ---------------------------------------------------------------- rastérisation
+"""
 def rasterize(x, y, t, x0, ytop, pixel_m, shape):
     mask = np.zeros(shape, dtype=bool)
     dx, dy, dt = np.diff(x), np.diff(y), np.diff(t)
@@ -125,7 +127,49 @@ def rasterize(x, y, t, x0, ytop, pixel_m, shape):
     valid = (ix >= 0) & (ix < shape[1]) & (iy >= 0) & (iy < shape[0])
     mask[iy[valid], ix[valid]] = True
     return mask
+"""
 
+
+def rasterize(x, y, t, x0, ytop, pixel_m, shape):
+    MIN_SPEED_MS = 0.5  # Seuil (1.8 km/h) pour ignorer la dérive GPS à l'arrêt
+
+    dx, dy, dt = np.diff(x), np.diff(y), np.diff(t)
+    dist = np.hypot(dx, dy)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        speed = np.where(dt > 0, dist / dt, np.inf)
+
+    # Ajout du filtre de vitesse minimum pour éviter les faux points chauds
+    ok = (dt > 0) & (dt <= MAX_GAP_S) & (speed <= MAX_SPEED_MS) & (speed >= MIN_SPEED_MS)
+
+    if not ok.any():
+        return np.zeros(shape, dtype=np.float32)
+
+    # 1. Segments et interpolation (retrait du +1 pour éviter de compter 2x les jonctions)
+    n = np.where(ok, np.maximum(1, np.ceil(dist / (pixel_m * 0.5))).astype(int), 0)
+    total = n.sum()
+
+    seg = np.repeat(np.arange(len(n)), n)
+    offsets = np.cumsum(n) - n
+    k = np.arange(total) - np.repeat(offsets, n) + 1  # k de 1 à n
+    f = k / n[seg]
+
+    xs = x[:-1][seg] + dx[seg] * f
+    ys = y[:-1][seg] + dy[seg] * f
+
+    ix = np.floor((xs - x0) / pixel_m).astype(int)
+    iy = np.floor((ytop - ys) / pixel_m).astype(int)
+    valid = (ix >= 0) & (ix < shape[1]) & (iy >= 0) & (iy < shape[0])
+
+    # 2. Poids pondéré par la distance réelle du sous-segment
+    weights = (dist / np.maximum(n, 1))[seg]
+
+    # 3. Accumulation mathématique des distances par pixel
+    layer = np.zeros(shape, dtype=np.float32)
+    np.add.at(layer, (iy[valid], ix[valid]), weights[valid])
+
+    # Conversion de la distance physique accumulée en "équivalent de passages"
+    return layer / pixel_m
 
 def compute_heat(tracks):
     all_lat = np.concatenate([t[1] for t in tracks])
@@ -213,11 +257,22 @@ def build_map(bounds, b64_img, n_runs, saturation, pixel_m):
     m = folium.Map(location=center, zoom_start=15, tiles=None, max_zoom=17)
 
     # 2. Appliquer la même limite de zoom à la couche satellite Esri
+
+    # fond noir classique :
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri, HERE, Garmin, FAO, NOAA, USGS",
+        name="Esri Dark",
+        max_zoom=16  # Limite fixée à 16 sur les serveurs Canvas d'Esri
+    ).add_to(m)
+
+    #fond satellite :
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Esri, HERE, Garmin, USGS, NGA",
         name="Satellite",
-        max_zoom=17
+        max_zoom=17,
+        show = None
     ).add_to(m)
 
     folium.raster_layers.ImageOverlay(
@@ -230,20 +285,17 @@ def build_map(bounds, b64_img, n_runs, saturation, pixel_m):
     ).add_to(m)
 
     #m.fit_bounds(bounds) #cette ligne permet de faire rentrer toutes les courses sur le 1er affichage, quitte à beaucoup dézoomer
-    folium.LayerControl(collapsed=True).add_to(m)
+    folium.LayerControl(collapsed=True, position='bottomleft').add_to(m)
 
     info_box_html = f"""
-    <div style="position: fixed; top: 15px; right: 15px; width: 290px; padding: 12px 16px;
+    <div style="position: fixed; top: 10px; right: 10px; width: 290px; padding: 12px 16px;
         font-size: 13px; line-height: 1.55; background: white; border: 2px solid #2B2D42;
         border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #111; z-index: 9999;">
         <div style="font-weight: 700; font-size: 15px; margin-bottom: 8px;
-            border-bottom: 1px solid #E0E0E0; padding-bottom: 4px;">Heatmap des Passages</div>
+            border-bottom: 1px solid #E0E0E0; padding-bottom: 4px;">Heatmap</div>
         <div style="margin: 3px 0;"><b>Courses analysées :</b> {n_runs}</div>
-        <div style="margin: 3px 0;"><b>Résolution :</b> {pixel_m:.1f} m / pixel</div>
-        <div style="margin: 3px 0;"><b>Lissage :</b> {BLUR_M:g} m</div>
         <div style="margin: 3px 0;"><b>Intensité max à ≈</b> {saturation:.0f} passages</div>
-        <div style="margin: 3px 0; color: #6B6B6B;">Max 1 passage par course et par pixel</div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(info_box_html))
