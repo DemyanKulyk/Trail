@@ -42,7 +42,7 @@ MAX_SPEED_MS = 12  # on ignore les segments plus rapides (sauts GPS aberrants), 
 # --- Rendu ---
 PERCENTILE = 98  # les pixels au-dessus de ce percentile sont affichés à intensité max
 GAMMA = 0.4  # applique une racine aux intensités  (compresse les écarts). 1 = linéaire
-PALETTE = "rouge écriture logo"
+PALETTE = ("rouge écriture logo")
 OPACITY = 0.95
 
 PALETTES = {
